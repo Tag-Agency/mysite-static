@@ -1,14 +1,14 @@
 <?php
 /**
- * Plugin Name: Static Publisher → GitHub → Vercel (PRODUCTION FIXED)
- * Description: Versione corretta con fix CSS/JS. Build → Git Push → GitHub Actions → Vercel.
- * Version: 3.1.0
+ * Plugin Name: Static Publisher → GitHub → Vercel (FIXED)
+ * Description: Versione corretta con fix CSS/JS per tutte le pagine. Build → Git Push → GitHub Actions → Vercel.
+ * Version: 3.2.0
  * Author: Tag Agency (Mauro)
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('SPVG_VERSION', '3.1.0');
+define('SPVG_VERSION', '3.2.0');
 define('SPVG_OUT_DIR', WP_CONTENT_DIR . '/static-build');
 define('SPVG_PROGRESS_TTL', 60 * 60); // 1h
 
@@ -26,7 +26,7 @@ class SPVG_Plugin {
 
   /* ----------------- Admin UI ----------------- */
   public function admin_menu() {
-    add_menu_page('Static → Vercel PRO', 'Static → Vercel PRO', 'manage_options', 'spvg', [$this, 'render_admin'], 'dashicons-cloud-upload', 58);
+    add_menu_page('Static → Vercel FIXED', 'Static → Vercel FIXED', 'manage_options', 'spvg', [$this, 'render_admin'], 'dashicons-cloud-upload', 58);
   }
 
   public function register_settings() {
@@ -73,8 +73,8 @@ class SPVG_Plugin {
 
     ?>
     <div class="wrap">
-      <h1>Static Publisher → Vercel PRO</h1>
-      <p><strong>🚀 Versione Production FIXED:</strong> Build → Git Push → Deploy Automatico</p>
+      <h1>Static Publisher → Vercel FIXED</h1>
+      <p><strong>🚀 Versione Corretta:</strong> CSS/JS funzionanti su tutte le pagine</p>
 
       <form method="post" action="options.php" style="margin-top:1rem;">
         <?php settings_fields('spvg_settings'); ?>
@@ -231,7 +231,7 @@ class SPVG_Plugin {
     return $parts[0]; 
   }
 
-  /* ----------------- Build statica - CORRETTA ----------------- */
+  /* ----------------- Build statica - VERSIONE CORRETTA ----------------- */
   public function build() {
     $this->prepare_out();
 
@@ -258,7 +258,7 @@ class SPVG_Plugin {
     $report = "URL totali: ".count($urls)."\n";
 
     foreach ($urls as $url) {
-      $html = $this->fetch(add_query_arg('static', '1', $url));
+      $html = $this->fetch($url);
       if ($html === false) { 
         $report .= "✖ ".$url."\n"; 
         continue; 
@@ -268,7 +268,7 @@ class SPVG_Plugin {
       $report .= "✔ ".$url." → ".$path."\n";
     }
 
-    // COPIA TUTTI GLI ASSETS PRIMA
+    // COPIA TUTTI GLI ASSETS
     $this->copy_all_assets();
     $this->copy_uploads();
     $this->copy_elementor_assets();
@@ -341,6 +341,9 @@ class SPVG_Plugin {
   }
 
   private function fetch($url) {
+    // Aggiungi il parametro static=1 per la modalità statica
+    $static_url = add_query_arg('static', '1', $url);
+    
     $args = [
       'timeout' => 30, 
       'redirection' => 5, 
@@ -348,75 +351,34 @@ class SPVG_Plugin {
       'cookies' => []
     ];
     
-    $r = wp_remote_get($url, $args);
+    $r = wp_remote_get($static_url, $args);
     if (is_wp_error($r)) return false;
     if (wp_remote_retrieve_response_code($r) !== 200) return false;
     
     $html = wp_remote_retrieve_body($r);
     
-    // APPLICA TUTTI I FIX PER CSS/JS
-    $html = $this->rewrite_urls($html);
-    $html = $this->fix_asset_paths($html);
+    // APPLICA IL REWRITE SEMPLICE E UNIVERSALE
+    $html = $this->rewrite_urls_simple($html);
     
     return $html;
   }
 
-  /* ----------------- FIX CRITICI PER CSS/JS ----------------- */
-  private function rewrite_urls($html) {
-    $site_url = preg_quote(home_url(), '#');
-    $wp_content = preg_quote(content_url(), '#');
-    $wp_includes = preg_quote(includes_url(), '#');
+  /* ----------------- REWRITE URLS SEMPLICE E UNIVERSALE ----------------- */
+  private function rewrite_urls_simple($html) {
+    $site_url = home_url();
     
-    // Sostituzioni multiple per coprire tutti i casi
+    // Sostituisci TUTTE le URL assolute del sito con relative
+    // Questo funziona per homepage e pagine interne
     $replacements = [
-      // URL assoluti → relativi
-      '#'.$site_url.'/#i' => '/',
-      '#'.$wp_content.'#i' => '/wp-content',
-      '#'.$wp_includes.'#i' => '/wp-includes',
-      
-      // Rimuovi versioning
-      '#(\.(?:css|js|png|jpg|jpeg|webp|svg|gif|woff|woff2))\?[^"\']+#i' => '$1',
-      
-      // Fix per URL che iniziano con //
-      '#"//#i' => '"https://',
-      "#'//#i" => "'https://",
+        $site_url . '/wp-content/' => '/wp-content/',
+        $site_url . '/wp-includes/' => '/wp-includes/',
+        $site_url . '/' => '/'
     ];
     
-    foreach ($replacements as $pattern => $replacement) {
-      $html = preg_replace($pattern, $replacement, $html);
-    }
+    $html = str_replace(array_keys($replacements), array_values($replacements), $html);
     
-    return $html;
-  }
-
-  private function fix_asset_paths($html) {
-    // Fix per CSS url() references
-    $html = preg_replace_callback(
-        '#url\([\'"]?(/[^\'")]+)[\'"]?\)#i',
-        function($matches) {
-            return 'url(".' . $matches[1] . '")';
-        },
-        $html
-    );
-    
-    // Fix per src e href che iniziano con /
-    $html = preg_replace_callback(
-        '#(src|href)=[\'"](/[^\'"]+)[\'"]#i',
-        function($matches) {
-            return $matches[1] . '=".' . $matches[2] . '"';
-        },
-        $html
-    );
-
-    // Fix per background images in style attributes
-    $html = preg_replace_callback(
-        '#style=[\'"][^\'"]*url\(([^)]+)\)[^\'"]*[\'"]#i',
-        function($matches) {
-            $fixed = preg_replace('#url\(([^)]+)\)#i', 'url(.$1)', $matches[0]);
-            return $fixed;
-        },
-        $html
-    );
+    // Rimuovi versioning da CSS/JS - IMPORTANTE!
+    $html = preg_replace('#(\.(?:css|js|png|jpg|jpeg|webp|svg|gif|woff|woff2))\?[^"\']+#', '$1', $html);
     
     return $html;
   }
@@ -456,15 +418,29 @@ class SPVG_Plugin {
         }
     }
     
-    // Copia wp-includes
+    // Copia wp-includes (CRITICO per JS/CSS di WordPress)
     $wp_includes_dir = ABSPATH . 'wp-includes';
     $dst_includes = SPVG_OUT_DIR . '/wp-includes';
     if (file_exists($wp_includes_dir)) {
         $this->rcopy($wp_includes_dir, $dst_includes);
     }
     
-    // Copia wp-json endpoints statici
-    $this->copy_wp_json();
+    // Copia la root di WordPress per file come wp-json, etc.
+    $this->copy_wp_root();
+  }
+
+  private function copy_wp_root() {
+    $root_files = [
+        'wp-config.php' => false, // Non copiare wp-config per sicurezza
+        'index.php' => true,
+        'xmlrpc.php' => true,
+    ];
+    
+    foreach ($root_files as $file => $should_copy) {
+        if ($should_copy && file_exists(ABSPATH . $file)) {
+            copy(ABSPATH . $file, SPVG_OUT_DIR . '/' . $file);
+        }
+    }
   }
 
   private function copy_uploads() {
@@ -484,27 +460,6 @@ class SPVG_Plugin {
     $elAssets = WP_PLUGIN_DIR.'/elementor/assets';
     if (file_exists($elAssets)) {
         $this->rcopy($elAssets, SPVG_OUT_DIR.'/wp-content/plugins/elementor/assets');
-    }
-  }
-
-  private function copy_wp_json() {
-    $api_endpoints = [
-        '/wp-json/wp/v2/posts',
-        '/wp-json/wp/v2/pages',
-        '/wp-json/wp/v2/categories',
-        '/wp-json/wp/v2/tags',
-    ];
-    
-    foreach ($api_endpoints as $endpoint) {
-        $url = home_url($endpoint);
-        $response = wp_remote_get($url, ['timeout' => 10]);
-        
-        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
-            $json = wp_remote_retrieve_body($response);
-            $path = SPVG_OUT_DIR . $endpoint;
-            wp_mkdir_p($path);
-            $this->write_file($path . '/index.html', $json);
-        }
     }
   }
 
