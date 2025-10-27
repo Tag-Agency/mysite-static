@@ -1,0 +1,2 @@
+<?php
+return ['messages'=>['2030ba32295279f8de3a571b79cd19b8'=>'Recent Posts','4bae17ae70e3c4b1cf133ecb44b242fe'=>'Recent Comments','525e08195f4da551e05432c44519eb08'=>'Archives','9fbc9357c7323f9b2e023a360bafe4e0'=>'<div class="wp-block-group"></div>','<div class="wp-block-group"></div>'=>'<div class="wp-block-group"></div>','Archives'=>'Archives','Categories'=>'Categories','Recent Comments'=>'Recent Comments','Recent Posts'=>'Recent Posts','d24f8e59a27133fb61e5c40617045bbf'=>'Categories']];

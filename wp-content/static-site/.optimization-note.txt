@@ -1,0 +1,5 @@
+Images should be optimized before deployment.
+Consider using:
+- Squoosh.app (free)
+- ShortPixel (service)
+- Imagify (service)

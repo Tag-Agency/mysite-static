@@ -1,0 +1,2 @@
+<?php
+return ['items'=>['Scopri di Più'=>['urls'=>[],'names'=>['[astra-settings]header-button1-text'],'cmp'=>['wpml-string-translation',1]],'/contact/'=>['urls'=>[],'names'=>['[astra-settings][header-button1-link-option]url'],'cmp'=>['wpml-string-translation',1]],'Copyright [copyright] [current_year] [site_title]'=>['urls'=>[],'names'=>['[astra-settings]footer-copyright-editor'],'cmp'=>['wpml-string-translation',1]]]];
