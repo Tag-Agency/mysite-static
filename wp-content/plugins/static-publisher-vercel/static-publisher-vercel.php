@@ -2,19 +2,17 @@
 /**
  * Plugin Name: Static Publisher → Vercel (PROVEN + OPTIMIZED)
  * Description: Versione collaudata che funziona, con ottimizzazioni performance aggiunte. Build → Git Push → Vercel.
- * Version: 3.8.1
+ * Version: 3.5.0
  * Author: Tag Agency (Mauro)
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('SPVG_VERSION', '3.8.1');
+define('SPVG_VERSION', '3.5.0');
 define('SPVG_OUT_DIR', WP_CONTENT_DIR . '/static-build');
 define('SPVG_PROGRESS_TTL', 60 * 60);
 
 class SPVG_Plugin {
-
-  private $gemini_api_key;
 
   public function __construct() {
     add_action('admin_menu', [$this, 'admin_menu']);
@@ -24,9 +22,6 @@ class SPVG_Plugin {
     // AJAX
     add_action('wp_ajax_spvg_prepare_deploy', [$this, 'ajax_prepare_deploy']);
     add_action('wp_ajax_spvg_deploy_step',    [$this, 'ajax_deploy_step']);
-    add_action('wp_ajax_spvg_build_progress', [$this, 'ajax_build_progress']);
-    
-    $this->gemini_api_key = get_option('spvg_gemini_api_key', '');
   }
 
   /* ----------------- Admin UI ----------------- */
@@ -40,14 +35,10 @@ class SPVG_Plugin {
     register_setting('spvg_settings', 'spvg_github_branch', ['default' => 'main']);
     register_setting('spvg_settings', 'spvg_exclusions');
     register_setting('spvg_settings', 'spvg_commit_message', ['default' => 'Static site update']);
-    register_setting('spvg_settings', 'spvg_performance_opt', ['default' => '1']);
-    register_setting('spvg_settings', 'spvg_gemini_api_key');
-    register_setting('spvg_settings', 'spvg_gemini_model', ['default' => 'gemini-1.5-flash']);
-    register_setting('spvg_settings', 'spvg_gemini_optimize', ['default' => '0']);
+    register_setting('spvg_settings', 'spvg_performance_opt', ['default' => '1']); // Nuova opzione
   }
 
   private function progress_key() { return 'spvg_progress_' . get_current_user_id(); }
-  private function build_progress_key() { return 'spvg_build_progress_' . get_current_user_id(); }
 
   public function render_admin() {
     if (!current_user_can('manage_options')) return;
@@ -57,22 +48,14 @@ class SPVG_Plugin {
       $action = sanitize_text_field($_POST['spvg_action']);
       try {
         if ($action === 'build') {
-          // Avvia build asincrona
-          $this->start_async_build();
-          $this->admin_notice('Build avviata! Controlla il progresso qui sotto.', 'success');
+          $report = $this->build();
+          $this->admin_notice('Build completata.', 'success');
         } elseif ($action === 'test_github') {
           $this->test_github_connection();
           $this->admin_notice('✅ Connessione GitHub riuscita!', 'success');
         } elseif ($action === 'setup_workflow') {
           $this->setup_github_workflow();
           $this->admin_notice('Workflow GitHub Actions creato.', 'success');
-        } elseif ($action === 'test_gemini') {
-          $this->test_gemini_connection();
-          $this->admin_notice('✅ Connessione Gemini riuscita!', 'success');
-        } elseif ($action === 'list_models') {
-          $models = $this->list_gemini_models();
-          $report = "Modelli Gemini disponibili:\n\n" . $models;
-          $this->admin_notice('Modelli Gemini caricati!', 'success');
         }
       } catch (Throwable $e) {
         $report = $e->getMessage();
@@ -86,9 +69,6 @@ class SPVG_Plugin {
     $exclusions = esc_textarea(get_option('spvg_exclusions', ''));
     $commit_msg = esc_attr(get_option('spvg_commit_message', 'Static site update'));
     $performance_opt = get_option('spvg_performance_opt', '1');
-    $gemini_api_key = esc_attr(get_option('spvg_gemini_api_key', ''));
-    $gemini_model = esc_attr(get_option('spvg_gemini_model', 'gemini-1.5-flash'));
-    $gemini_optimize = get_option('spvg_gemini_optimize', '0');
 
     $ajax_nonce = wp_create_nonce('spvg_ajax_nonce');
     $ajax_url = admin_url('admin-ajax.php');
@@ -96,7 +76,7 @@ class SPVG_Plugin {
     ?>
     <div class="wrap">
       <h1>Static Publisher → Vercel</h1>
-      <p><strong>🚀 Versione Collaudata + Ottimizzazioni Performance + Gemini AI</strong></p>
+      <p><strong>🚀 Versione Collaudata + Ottimizzazioni Performance</strong></p>
 
       <form method="post" action="options.php" style="margin-top:1rem;">
         <?php settings_fields('spvg_settings'); ?>
@@ -106,19 +86,6 @@ class SPVG_Plugin {
           <tr><th scope="row">Repository</th><td><input type="text" name="spvg_github_repo" value="<?php echo $github_repo; ?>" class="regular-text" placeholder="username/repository" /></td></tr>
           <tr><th scope="row">Branch</th><td><input type="text" name="spvg_github_branch" value="<?php echo $github_branch; ?>" class="regular-text" placeholder="main" /></td></tr>
           <tr><th scope="row">Commit Message</th><td><input type="text" name="spvg_commit_message" value="<?php echo $commit_msg; ?>" class="regular-text" /></td></tr>
-        </table>
-
-        <h2>Ottimizzazioni AI (Gemini)</h2>
-        <table class="form-table" role="presentation">
-          <tr><th scope="row">Gemini API Key</th>
-              <td><input type="password" name="spvg_gemini_api_key" value="<?php echo $gemini_api_key; ?>" class="regular-text" placeholder="AIza..." />
-                  <p class="description"><a href="https://aistudio.google.com/app/apikey" target="_blank">Ottieni API Key gratuita</a></p></td></tr>
-          <tr><th scope="row">Modello Gemini</th>
-              <td><input type="text" name="spvg_gemini_model" value="<?php echo $gemini_model; ?>" class="regular-text" placeholder="es. gemini-1.5-flash" />
-                  <p class="description">Modelli suggeriti: gemini-1.5-flash, gemini-1.5-pro, gemini-pro</p></td></tr>
-          <tr><th scope="row">Ottimizzazione AI</th>
-              <td><input type="checkbox" name="spvg_gemini_optimize" value="1" <?php checked($gemini_optimize, '1'); ?> /> 
-                  Attiva ottimizzazione HTML con Gemini AI</td></tr>
         </table>
 
         <h2>Configurazione Build</h2>
@@ -135,35 +102,21 @@ class SPVG_Plugin {
       <form method="post">
         <?php wp_nonce_field('spvg_nonce_action', 'spvg_nonce_field'); ?>
         <p style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="button" name="spvg_action" value="build" id="spvg-build-btn">🏗️ Build Statica</button>
+          <button class="button" name="spvg_action" value="build">Build Statica</button>
           <button type="button" id="spvg-start-deploy" class="button button-primary">🚀 DEPLOY COMPLETO</button>
           <button class="button" name="spvg_action" value="test_github">🔍 Test GitHub</button>
-          <button class="button" name="spvg_action" value="test_gemini">🤖 Test Gemini</button>
-          <button class="button" name="spvg_action" value="list_models">📋 Lista Modelli</button>
           <button class="button" name="spvg_action" value="setup_workflow">⚙️ Setup Workflow</button>
         </p>
       </form>
 
-      <!-- Build Progress UI -->
-      <div id="spvg-build-progress-wrap" style="display:none;max-width:680px;margin-top:20px;">
-        <h3>🏗️ Build in Corso</h3>
-        <div style="margin:12px 0;">Stato: <strong id="spvg-build-status-text">Preparazione...</strong></div>
+      <!-- Progress UI -->
+      <div id="spvg-progress-wrap" style="display:none;max-width:680px;">
+        <div style="margin:12px 0;">Stato: <strong id="spvg-status-text">—</strong></div>
         <div style="width:100%;background:#eee;border:1px solid #ccc;border-radius:4px;height:20px;overflow:hidden;">
-          <div id="spvg-build-bar" style="height:100%;width:0%;background:#46b450;transition:width .3s;"></div>
+          <div id="spvg-bar" style="height:100%;width:0%;background:#2271b1;transition:width .2s;"></div>
         </div>
-        <div style="margin-top:6px;">Progresso: <span id="spvg-build-perc">0%</span> - <span id="spvg-build-details">Inizializzazione...</span></div>
-        <pre id="spvg-build-log" style="margin-top:10px;max-height:260px;overflow:auto;background:#fff;border:1px solid #ccd;padding:10px;font-size:12px;"></pre>
-      </div>
-
-      <!-- Deploy Progress UI -->
-      <div id="spvg-deploy-progress-wrap" style="display:none;max-width:680px;margin-top:20px;">
-        <h3>🚀 Deploy in Corso</h3>
-        <div style="margin:12px 0;">Stato: <strong id="spvg-deploy-status-text">—</strong></div>
-        <div style="width:100%;background:#eee;border:1px solid #ccc;border-radius:4px;height:20px;overflow:hidden;">
-          <div id="spvg-deploy-bar" style="height:100%;width:0%;background:#2271b1;transition:width .2s;"></div>
-        </div>
-        <div style="margin-top:6px;">Fase: <span id="spvg-deploy-phase">0/3</span> - <span id="spvg-deploy-perc">0%</span></div>
-        <pre id="spvg-deploy-log" style="margin-top:10px;max-height:260px;overflow:auto;background:#fff;border:1px solid #ccd;padding:10px;"></pre>
+        <div style="margin-top:6px;">Fase: <span id="spvg-phase">0/3</span> - <span id="spvg-perc">0%</span></div>
+        <pre id="spvg-log" style="margin-top:10px;max-height:260px;overflow:auto;background:#fff;border:1px solid #ccd;padding:10px;"></pre>
       </div>
 
       <?php if ($report): ?>
@@ -172,72 +125,27 @@ class SPVG_Plugin {
       <?php endif; ?>
     </div>
 
-    <style>
-    .spvg-progress-active {
-      position: relative;
-      overflow: hidden;
-    }
-    .spvg-progress-active::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-      animation: loading 1.5s infinite;
-    }
-    @keyframes loading {
-      0% { left: -100%; }
-      100% { left: 100%; }
-    }
-    </style>
-
     <script>
     (function(){
-      const buildBtn = document.getElementById('spvg-build-btn');
-      const deployBtn = document.getElementById('spvg-start-deploy');
-      
-      const buildWrap = document.getElementById('spvg-build-progress-wrap');
-      const buildBar = document.getElementById('spvg-build-bar');
-      const buildPerc = document.getElementById('spvg-build-perc');
-      const buildStatus = document.getElementById('spvg-build-status-text');
-      const buildDetails = document.getElementById('spvg-build-details');
-      const buildLog = document.getElementById('spvg-build-log');
-      
-      const deployWrap = document.getElementById('spvg-deploy-progress-wrap');
-      const deployBar = document.getElementById('spvg-deploy-bar');
-      const deployPerc = document.getElementById('spvg-deploy-perc');
-      const deployPhase = document.getElementById('spvg-deploy-phase');
-      const deployStatus = document.getElementById('spvg-deploy-status-text');
-      const deployLog = document.getElementById('spvg-deploy-log');
+      const btn = document.getElementById('spvg-start-deploy');
+      if(!btn) return;
+
+      const wrap  = document.getElementById('spvg-progress-wrap');
+      const bar   = document.getElementById('spvg-bar');
+      const perc  = document.getElementById('spvg-perc');
+      const phase = document.getElementById('spvg-phase');
+      const stat  = document.getElementById('spvg-status-text');
+      const logEl = document.getElementById('spvg-log');
 
       const AJAX  = "<?php echo esc_js($ajax_url); ?>";
       const NONCE = "<?php echo esc_js($ajax_nonce); ?>";
 
-      function buildLog(msg){ 
-        const timestamp = new Date().toLocaleTimeString();
-        buildLog.textContent += `[${timestamp}] ${msg}\n`; 
-        buildLog.scrollTop = buildLog.scrollHeight; 
-      }
-      
-      function deployLog(msg){ 
-        deployLog.textContent += msg + '\n'; 
-        deployLog.scrollTop = deployLog.scrollHeight; 
-      }
-      
-      function setBuildProg(p, status, details){
-        buildBar.style.width = p + '%';
-        buildPerc.textContent = p + '%';
-        buildStatus.textContent = status || '';
-        buildDetails.textContent = details || '';
-      }
-
-      function setDeployProg(p, ph, s){
-        deployBar.style.width = p + '%';
-        deployPerc.textContent = p + '%';
-        deployPhase.textContent = ph;
-        deployStatus.textContent = s || '';
+      function log(msg){ logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+      function setProg(p, ph, s){
+        bar.style.width = p + '%';
+        perc.textContent = p + '%';
+        phase.textContent = ph;
+        stat.textContent = s || '';
       }
 
       async function post(action, data = {}) {
@@ -255,356 +163,40 @@ class SPVG_Plugin {
         return json.data;
       }
 
-      // Build Progress Monitor
-      async function monitorBuildProgress() {
-        buildWrap.style.display = 'block';
-        buildLog.textContent = '';
-        setBuildProg(0, 'Preparazione...', 'Inizializzazione build');
-        
-        let buildFinished = false;
-        let lastProgress = 0;
-        
-        // Disabilita il pulsante build
-        if(buildBtn) {
-          buildBtn.disabled = true;
-          buildBtn.classList.add('spvg-progress-active');
-        }
-        
-        try {
-          // Avvia la build
-          await post('spvg_prepare_deploy');
-          buildLog('✅ Build avviata con successo');
-          
-          // Monitora il progresso ogni 2 secondi
-          while(!buildFinished) {
-            try {
-              const progress = await post('spvg_build_progress');
-              
-              if (progress.finished) {
-                buildLog('🎉 BUILD COMPLETATA!');
-                buildLog('📊 ' + progress.report);
-                setBuildProg(100, 'Completato', 'Build terminata con successo');
-                buildFinished = true;
-                break;
-              }
-              
-              if (progress.percent > lastProgress) {
-                setBuildProg(progress.percent, progress.status, progress.details);
-                if (progress.message) buildLog(progress.message);
-                lastProgress = progress.percent;
-              }
-              
-              // Timeout dopo 30 minuti
-              if (progress.percent >= 100 || progress.error) {
-                if (progress.error) {
-                  buildLog('❌ ERRORE: ' + progress.error);
-                  setBuildProg(0, 'Errore', 'Build fallita');
-                } else {
-                  buildLog('🎉 BUILD COMPLETATA!');
-                  setBuildProg(100, 'Completato', 'Build terminata con successo');
-                }
-                buildFinished = true;
-                break;
-              }
-              
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              
-            } catch (e) {
-              buildLog('⚠️ Errore monitoraggio: ' + e.message);
-              // Continua a monitorare nonostante errori minori
-              await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-          }
-          
-        } catch(e) {
-          buildLog('❌ ERRORE CRITICO: ' + e.message);
-          setBuildProg(0, 'Errore', 'Build fallita');
-        } finally {
-          // Riabilita il pulsante build
-          if(buildBtn) {
-            buildBtn.disabled = false;
-            buildBtn.classList.remove('spvg-progress-active');
-          }
-        }
-      }
-
-      // Deploy Handler
-      async function startDeploy(){
-        deployWrap.style.display = 'block';
-        deployLog.textContent = '';
-        setDeployProg(0, '0/3', 'Preparazione…');
+      async function start(){
+        wrap.style.display = 'block';
+        logEl.textContent = '';
+        setProg(0, '0/3', 'Preparazione…');
         
         try {
           const prep = await post('spvg_prepare_deploy');
-          deployLog('✅ Preparazione completata');
+          log('✅ Preparazione completata');
           
           let finished = false;
           while(!finished){
             const step = await post('spvg_deploy_step');
-            setDeployProg(step.percent, step.done + '/' + step.total, step.message);
+            setProg(step.percent, step.done + '/' + step.total, step.message);
             
-            if (step.message) deployLog('📦 ' + step.message);
-            if (step.output) deployLog('🔧 ' + step.output.join('\n'));
+            if (step.message) log('📦 ' + step.message);
+            if (step.output) log('🔧 ' + step.output.join('\n'));
             
             if (step.phase === 'done'){
-              deployLog('🎉 DEPLOY COMPLETATO!');
-              deployLog('🚀 GitHub Actions: ' + step.deploy_url);
-              setDeployProg(100, '3/3', 'Completato');
+              log('🎉 DEPLOY COMPLETATO!');
+              log('🚀 GitHub Actions: ' + step.deploy_url);
+              setProg(100, '3/3', 'Completato');
               finished = true;
             }
           }
         } catch(e) {
-          deployLog('❌ ERRORE: ' + e.message);
-          setDeployProg(0, 'Errore', 'Fallito');
+          log('❌ ERRORE: ' + e.message);
+          setProg(0, 'Errore', 'Fallito');
         }
       }
 
-      // Event Listeners
-      if(buildBtn) {
-        buildBtn.addEventListener('click', function(e) {
-          if(!buildBtn.disabled) {
-            monitorBuildProgress();
-          }
-        });
-      }
-      
-      if(deployBtn) {
-        deployBtn.addEventListener('click', startDeploy);
-      }
+      btn.addEventListener('click', start);
     })();
     </script>
     <?php
-  }
-
-  private function start_async_build() {
-    // Inizializza il progresso della build
-    $progress_data = [
-      'started' => time(),
-      'percent' => 0,
-      'status' => 'Preparazione...',
-      'details' => 'Inizializzazione build',
-      'current_url' => '',
-      'total_urls' => 0,
-      'processed_urls' => 0,
-      'finished' => false,
-      'error' => null,
-      'report' => ''
-    ];
-    
-    set_transient($this->build_progress_key(), $progress_data, SPVG_PROGRESS_TTL);
-    
-    // Avvia la build in background
-    $this->build_async();
-  }
-
-  private function build_async() {
-    // Esegui la build in background
-    ignore_user_abort(true);
-    set_time_limit(0);
-    
-    $progress_key = $this->build_progress_key();
-    
-    try {
-      $report = $this->build_with_progress();
-      
-      // Aggiorna il progresso finale
-      $progress_data = [
-        'finished' => true,
-        'percent' => 100,
-        'status' => 'Completato',
-        'details' => 'Build terminata con successo',
-        'report' => $report,
-        'completed' => time()
-      ];
-      
-      set_transient($progress_key, $progress_data, SPVG_PROGRESS_TTL);
-      
-    } catch (Exception $e) {
-      $progress_data = [
-        'finished' => true,
-        'error' => $e->getMessage(),
-        'percent' => 0,
-        'status' => 'Errore',
-        'details' => 'Build fallita'
-      ];
-      
-      set_transient($progress_key, $progress_data, SPVG_PROGRESS_TTL);
-    }
-  }
-
-  /* ----------------- Build con Progresso ----------------- */
-  public function build_with_progress() {
-    $progress_key = $this->build_progress_key();
-    
-    $this->prepare_out();
-    
-    // Aggiorna progresso
-    $this->update_build_progress(5, 'Preparazione ambiente', 'Pulizia directory...');
-
-    // Rigenera CSS Elementor
-    if (class_exists('\Elementor\Plugin')) {
-      try { 
-        \Elementor\Plugin::$instance->files_manager->clear_cache(); 
-        $this->update_build_progress(10, 'Ottimizzazione Elementor', 'Rigenerazione CSS...');
-      } catch (Throwable $e) {}
-    }
-
-    $urls = $this->collect_urls();
-    $exclusions = array_filter(array_map('trim', explode("\n", (string) get_option('spvg_exclusions', ''))));
-    
-    if ($exclusions) {
-      $urls = array_values(array_filter($urls, function($u) use ($exclusions){
-        $path = parse_url($u, PHP_URL_PATH) ?: '';
-        foreach ($exclusions as $ex) {
-          $ex = rtrim($ex, "/");
-          if ($ex && $this->starts_with($path, $ex)) return false;
-        }
-        return true;
-      }));
-    }
-
-    $total_urls = count($urls);
-    $this->update_build_progress(15, 'Raccolta URL', "Trovati {$total_urls} URL da processare");
-
-    $report = "URL totali: {$total_urls}\n";
-    $gemini_optimized = 0;
-
-    foreach ($urls as $index => $url) {
-      $percent = 15 + (($index / $total_urls) * 60); // 15% - 75%
-      $this->update_build_progress(
-        $percent, 
-        'Generazione pagine', 
-        "Processando {$url} (" . ($index + 1) . "/{$total_urls})"
-      );
-
-      $html = $this->fetch($url);
-      if ($html === false) { 
-        $report .= "✖ {$url}\n"; 
-        $this->add_build_log("❌ Fallito: {$url}");
-        continue; 
-      }
-
-      // Ottimizzazione con Gemini AI
-      if (get_option('spvg_gemini_optimize', '0') && $this->gemini_api_key) {
-        try {
-          $this->update_build_progress(
-            $percent, 
-            'Ottimizzazione AI', 
-            "Ottimizzando {$url} con Gemini"
-          );
-          
-          $optimized_html = $this->optimize_with_gemini($html);
-          if ($optimized_html && strlen($optimized_html) > 100) {
-            $html = $optimized_html;
-            $gemini_optimized++;
-            $report .= "🤖 {$url} (AI ottimizzato)\n";
-            $this->add_build_log("🤖 Ottimizzato: {$url}");
-          } else {
-            $report .= "✔ {$url} (AI fallback)\n";
-            $this->add_build_log("✅ Completato: {$url} (fallback)");
-          }
-        } catch (Exception $e) {
-          $report .= "✔ {$url} (AI errore: " . $e->getMessage() . ")\n";
-          $this->add_build_log("⚠️ Completato: {$url} (errore AI: {$e->getMessage()})");
-        }
-      } else {
-        $report .= "✔ {$url}\n";
-        $this->add_build_log("✅ Completato: {$url}");
-      }
-
-      $path = $this->url_to_path($url);
-      $this->write_file($path, $html);
-    }
-
-    $this->update_build_progress(80, 'Copia assets', 'Copiando file statici...');
-
-    // Copia assets
-    $this->copy_all_assets();
-    $this->copy_uploads();
-    $this->copy_elementor_assets();
-
-    // Ottimizzazioni performance
-    if (get_option('spvg_performance_opt', '1')) {
-      $this->update_build_progress(90, 'Ottimizzazioni', 'Applicando ottimizzazioni performance...');
-      $this->apply_performance_optimizations();
-    }
-
-    // file extra
-    $this->write_file(SPVG_OUT_DIR.'/404.html', $this->basic_404());
-    $this->write_vercel_json();
-
-    $report .= "\n⚡ Ottimizzazioni performance: " . (get_option('spvg_performance_opt', '1') ? 'Sì' : 'No');
-    $report .= "\n🤖 Pagine ottimizzate con AI: " . $gemini_optimized;
-
-    $this->update_build_progress(95, 'Finalizzazione', 'Completamento build...');
-
-    return $report;
-  }
-
-  private function update_build_progress($percent, $status, $details) {
-    $progress_key = $this->build_progress_key();
-    $progress_data = get_transient($progress_key) ?: [];
-    
-    $progress_data['percent'] = min(100, max(0, $percent));
-    $progress_data['status'] = $status;
-    $progress_data['details'] = $details;
-    $progress_data['updated'] = time();
-    
-    set_transient($progress_key, $progress_data, SPVG_PROGRESS_TTL);
-  }
-
-  private function add_build_log($message) {
-    $progress_key = $this->build_progress_key();
-    $progress_data = get_transient($progress_key) ?: [];
-    
-    if (!isset($progress_data['logs'])) {
-      $progress_data['logs'] = [];
-    }
-    
-    $progress_data['logs'][] = [
-      'timestamp' => time(),
-      'message' => $message
-    ];
-    
-    // Mantieni solo gli ultimi 100 log
-    if (count($progress_data['logs']) > 100) {
-      $progress_data['logs'] = array_slice($progress_data['logs'], -100);
-    }
-    
-    set_transient($progress_key, $progress_data, SPVG_PROGRESS_TTL);
-  }
-
-  public function ajax_build_progress() {
-    check_ajax_referer('spvg_ajax_nonce');
-    
-    $progress_key = $this->build_progress_key();
-    $progress_data = get_transient($progress_key) ?: [];
-    
-    if (empty($progress_data)) {
-      wp_send_json_success([
-        'percent' => 0,
-        'status' => 'Non avviata',
-        'details' => 'La build non è stata avviata',
-        'finished' => false
-      ]);
-    }
-    
-    $response = [
-      'percent' => $progress_data['percent'] ?? 0,
-      'status' => $progress_data['status'] ?? 'Sconosciuto',
-      'details' => $progress_data['details'] ?? '',
-      'finished' => $progress_data['finished'] ?? false,
-      'error' => $progress_data['error'] ?? null,
-      'report' => $progress_data['report'] ?? ''
-    ];
-    
-    // Aggiungi i log recenti
-    if (isset($progress_data['logs'])) {
-      $recent_logs = array_slice($progress_data['logs'], -10); // Ultimi 10 log
-      $response['message'] = end($recent_logs)['message'] ?? '';
-    }
-    
-    wp_send_json_success($response);
   }
 
   private function admin_notice($msg, $type='success') {
@@ -626,194 +218,56 @@ class SPVG_Plugin {
     return $parts[0]; 
   }
 
-  /* ----------------- Build statica originale (per compatibilità) ----------------- */
+  /* ----------------- Build statica - VERSIONE COLLAUDATA ----------------- */
   public function build() {
-    return $this->build_with_progress();
-  }
+    $this->prepare_out();
 
-  /* ----------------- Gemini AI Optimization ----------------- */
-  private function optimize_with_gemini($html) {
-    if (!$this->gemini_api_key) {
-      return $html;
+    // Rigenera CSS Elementor
+    if (class_exists('\Elementor\Plugin')) {
+      try { \Elementor\Plugin::$instance->files_manager->clear_cache(); } catch (Throwable $e) {}
     }
 
-    $model = get_option('spvg_gemini_model', 'gemini-1.5-flash');
-    
-    $prompt = "Ottimizza questo HTML per performance massime seguendo STRETTAMENTE queste regole:
-
-1. RIMUOVI COMPLETAMENTE:
-   - Tutti i commenti HTML/CSS/JS
-   - Tutti i riferimenti a WordPress (classi, ID, meta tag wp-*)
-   - Script e stili non essenziali
-   - Attribute non standard
-   - Elementi nascosti o non visibili
-
-2. APPLICA:
-   - Minificazione HTML completa (rimuovi spazi superflui, newlines)
-   - Minificazione CSS inline (rimuovi spazi, commenti)
-   - Lazy loading per tutte le immagini
-   - Defer per gli script non critici
-   - Rimozione attributi non necessari (style, data-* non usati)
-
-3. MANTIENI:
-   - Struttura semantica del documento
-   - Tutto il contenuto visibile al utente
-   - Tutti i link e la navigazione
-   - Funzionalità base del sito
-   - Immagini e media
-
-4. OTTIMIZZAZIONI CSS:
-   - Unisci regole CSS duplicate
-   - Rimuovi proprietà non usate
-   - Shorten quando possibile
-
-5. FORMATO OUTPUT:
-   - Solo HTML pulito e ottimizzato
-   - Nessun commento
-   - Nessuna spiegazione aggiuntiva
-
-HTML DA OTTIMIZZARE:
-" . $html;
-
-    // URL dinamico basato sul modello selezionato
-    $url = "https://generativelanguage.googleapis.com/v1/models/{$model}:generateContent?key=" . $this->gemini_api_key;
-    
-    $response = wp_remote_post($url, [
-      'headers' => [
-        'Content-Type' => 'application/json',
-      ],
-      'body' => json_encode([
-        'contents' => [
-          [
-            'parts' => [
-              ['text' => $prompt]
-            ]
-          ]
-        ],
-        'generationConfig' => [
-          'temperature' => 0.1,
-          'topK' => 40,
-          'topP' => 0.8,
-          'maxOutputTokens' => 8192,
-        ]
-      ]),
-      'timeout' => 30,
-      'sslverify' => true
-    ]);
-
-    if (is_wp_error($response)) {
-      throw new Exception('Errore connessione Gemini: ' . $response->get_error_message());
+    $urls = $this->collect_urls();
+    $exclusions = array_filter(array_map('trim', explode("\n", (string) get_option('spvg_exclusions', ''))));
+    if ($exclusions) {
+      $urls = array_values(array_filter($urls, function($u) use ($exclusions){
+        $path = parse_url($u, PHP_URL_PATH) ?: '';
+        foreach ($exclusions as $ex) {
+          $ex = rtrim($ex, "/");
+          if ($ex && $this->starts_with($path, $ex)) return false;
+        }
+        return true;
+      }));
     }
 
-    $response_code = wp_remote_retrieve_response_code($response);
-    $response_body = wp_remote_retrieve_body($response);
-    
-    if ($response_code !== 200) {
-      throw new Exception('HTTP Error ' . $response_code . ': ' . $response_body);
-    }
+    $report = "URL totali: ".count($urls)."\n";
 
-    $body = json_decode($response_body, true);
-    
-    if (isset($body['error'])) {
-      $error_msg = $body['error']['message'] ?? 'Errore sconosciuto';
-      throw new Exception('Errore Gemini API: ' . $error_msg);
-    }
-
-    if (!isset($body['candidates'][0]['content']['parts'][0]['text'])) {
-      throw new Exception('Risposta Gemini non valida - struttura inattesa');
-    }
-
-    $optimized = trim($body['candidates'][0]['content']['parts'][0]['text']);
-    
-    // Validazione base - rimuovi eventuali markdown code blocks
-    $optimized = preg_replace('/```html|```/i', '', $optimized);
-    $optimized = trim($optimized);
-    
-    // Validazione risultato
-    if (strlen($optimized) < 100) {
-      throw new Exception('HTML ottimizzato troppo corto');
-    }
-    
-    if (strpos($optimized, '<html') === false && strpos($optimized, '<!DOCTYPE') === false) {
-      throw new Exception('HTML ottimizzato non valido - manca doctype/html');
-    }
-
-    return $optimized;
-  }
-
-  /* ----------------- Lista Modelli Gemini ----------------- */
-  private function list_gemini_models() {
-    if (!$this->gemini_api_key) {
-      throw new RuntimeException('Configura la Gemini API Key prima.');
-    }
-
-    $url = "https://generativelanguage.googleapis.com/v1/models?key=" . $this->gemini_api_key;
-    
-    $response = wp_remote_get($url, [
-      'timeout' => 30,
-      'sslverify' => true
-    ]);
-
-    if (is_wp_error($response)) {
-      throw new Exception('Errore connessione Gemini: ' . $response->get_error_message());
-    }
-
-    $response_code = wp_remote_retrieve_response_code($response);
-    $response_body = wp_remote_retrieve_body($response);
-    
-    if ($response_code !== 200) {
-      throw new Exception('HTTP Error ' . $response_code . ': ' . $response_body);
-    }
-
-    $body = json_decode($response_body, true);
-    
-    if (isset($body['error'])) {
-      $error_msg = $body['error']['message'] ?? 'Errore sconosciuto';
-      throw new Exception('Errore Gemini API: ' . $error_msg);
-    }
-
-    if (!isset($body['models'])) {
-      throw new Exception('Nessun modello trovato nella risposta');
-    }
-
-    $models_list = "MODELI GEMINI DISPONIBILI:\n\n";
-    foreach ($body['models'] as $model) {
-      $name = $model['name'] ?? 'N/A';
-      $display_name = $model['displayName'] ?? 'N/A';
-      $description = $model['description'] ?? 'N/A';
-      $supported_methods = isset($model['supportedGenerationMethods']) ? implode(', ', $model['supportedGenerationMethods']) : 'N/A';
-      
-      $models_list .= "🔹 {$display_name}\n";
-      $models_list .= "   Nome: {$name}\n";
-      $models_list .= "   Metodi: {$supported_methods}\n";
-      $models_list .= "   Desc: {$description}\n\n";
-    }
-
-    return $models_list;
-  }
-
-  private function test_gemini_connection() {
-    if (!$this->gemini_api_key) {
-      throw new RuntimeException('Configura la Gemini API Key prima.');
-    }
-
-    $model = get_option('spvg_gemini_model', 'gemini-1.5-flash');
-    $test_html = '<!DOCTYPE html><html><head><title>Test</title></head><body><h1>Test Page</h1><p>This is a test page for Gemini optimization.</p></body></html>';
-    
-    try {
-      $result = $this->optimize_with_gemini($test_html);
-      
-      if (!$result || strlen($result) < 50) {
-        throw new RuntimeException('Gemini API non risponde correttamente - risultato troppo corto');
+    foreach ($urls as $url) {
+      $html = $this->fetch($url);
+      if ($html === false) { 
+        $report .= "✖ ".$url."\n"; 
+        continue; 
       }
-      
-      if (strpos($result, 'Test Page') === false) {
-        throw new RuntimeException('Gemini API ha modificato troppo il contenuto');
-      }
-      
-    } catch (Exception $e) {
-      throw new RuntimeException('Test Gemini fallito: ' . $e->getMessage());
+      $path = $this->url_to_path($url);
+      $this->write_file($path, $html);
+      $report .= "✔ ".$url." → ".$path."\n";
     }
+
+    // Copia assets (COME PRIMA)
+    $this->copy_all_assets();
+    $this->copy_uploads();
+    $this->copy_elementor_assets();
+
+    // Ottimizzazioni performance (NUOVE - OPZIONALI)
+    if (get_option('spvg_performance_opt', '1')) {
+      $this->apply_performance_optimizations();
+    }
+
+    // file extra
+    $this->write_file(SPVG_OUT_DIR.'/404.html', $this->basic_404());
+    $this->write_vercel_json();
+
+    return $report . "\n\n⚡ Ottimizzazioni performance applicate: " . (get_option('spvg_performance_opt', '1') ? 'Sì' : 'No');
   }
 
   private function prepare_out() { 
