@@ -1,5 +1,5 @@
 Performance optimizations applied:
 - Lazy loading images
 - HTML minification + comment removal
-- Resource hints (fonts)
-Generated: 2025-10-29 21:40:00
+- Resource hints (Google Fonts)
+Generated: 2025-10-29 21:53:56
